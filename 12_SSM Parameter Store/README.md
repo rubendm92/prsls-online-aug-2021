@@ -112,14 +112,15 @@ and also Middy's SSM middleware:
 
 These are perfect examples of static values that can be passed in via environment variables. So let's do that.
 
-Open `serverless.yml`, under `provider`, let's add two environment variables for `serviceName` and `stage`. **NOTE**: environment variables that are configured under `provider.environment` would be copied to all functions by defautl.
+Open `serverless.yml`, under `provider`, let's add two environment variables for `serviceName` and `stage`.
+
+**NOTE**: environment variables that are configured under `provider.environment` would be copied to all functions by defautl.
 
 This is what we need to add:
 
 ```yml
-environment:
-  serviceName: ${self:service}
-  stage: ${self:provider.stage}
+serviceName: ${self:service}
+stage: ${self:provider.stage}
 ```
 
 After this change, your `provider` section should look like this:
@@ -128,7 +129,22 @@ After this change, your `provider` section should look like this:
 provider:
   name: aws
   runtime: nodejs12.x
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:scan
+      Resource: !GetAtt RestaurantsTable.Arn
+    - Effect: Allow
+      Action: execute-api:Invoke
+      Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+
   environment:
+    rest_api_url:
+      Fn::Join:
+        - ""
+        - - https://
+          - !Ref ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
     serviceName: ${self:service}
     stage: ${self:provider.stage}
 ```
@@ -160,7 +176,7 @@ const { serviceName, stage } = process.env
 
 ```javascript
 module.exports.handler = middy(async (event, context) => {
-  const restaurants = await getRestaurants(process.env.defaultResults)
+  const restaurants = await getRestaurants(context.config.defaultResults)
   const response = {
     statusCode: 200,
     body: JSON.stringify(restaurants)
@@ -169,14 +185,11 @@ module.exports.handler = middy(async (event, context) => {
   return response
 }).use(ssm({
   cache: true,
-  cacheExpiryInMillis: 1 * 60 * 1000, // 1 mins
-  names: {
+  cacheExpiry: 1 * 60 * 1000, // 1 mins
+  setToContext: true,
+  fetchData: {
     config: `/${serviceName}/${stage}/get-restaurants/config`
-  },
-  onChange: () => {
-    const config = JSON.parse(process.env.config)
-    process.env.defaultResults = config.defaultResults
-  }  
+  }
 }))
 ```
 
@@ -203,19 +216,13 @@ middy(async (event, context) => {
 ```
 
 * `cache: true` tells the middleware to cache the SSM parameter value, so we don't hammer SSM Parameter Store with requests.
-* `cacheExpiryInMillis: 1 * 60 * 1000` allows the cached value to be expired after 1 minute. So if we change the configuration in SSM Parameter Store, then the concurrent executions would load the new value when their cache expires, without needing a deployment.
-* `names: { config: ... }` fetches individual parameters and stores them in either the invocation `context` object, or the environment variables. By default, they're stored in the environment variables, but we can use another optional config `setToContext` to tell the middleware to store them in the `context` object instead.
-* `onChange: () => { ... }` is necessary here because the parameter string is a JSON, so we need to parse it, and store it somewhere. So in this case, we only care about `defaultResults`, so we put that in an environment variable.
+* `cacheExpiry: 1 * 60 * 1000` allows the cached value to be expired after 1 minute. So if we change the configuration in SSM Parameter Store, then the concurrent executions would load the new value when their cache expires, without needing a deployment.
+* `fetchData: { config: ... }` fetches individual parameters and stores them in either the invocation `context` object, or the environment variables. By default, they're stored in the environment variables, but we can use the optional config `setToContext` to tell the middleware to store them in the `context` object instead.
+
+* notice on ln22, where we call the `getRestaurants` function? Now, we're passing `context.config.defaultResults` that we set above.
 
 ```javascript
-const config = JSON.parse(process.env.config)
-process.env.defaultResults = config.defaultResults
-```
-
-* notice on ln22, where we call the `getRestaurants` function? Now, we're passing `process.env.defaultResults` that we set above.
-
-```javascript
-const restaurants = await getRestaurants(process.env.defaultResults)
+const restaurants = await getRestaurants(context.config.defaultResults)
 ```
 
 6. Let's run our integration tests to make sure everything still works.
@@ -261,7 +268,7 @@ const { serviceName, stage } = process.env
 module.exports.handler = middy(async (event, context) => {
   const req = JSON.parse(event.body)
   const theme = req.theme
-  const restaurants = await findRestaurantsByTheme(theme, process.env.defaultResults)
+  const restaurants = await findRestaurantsByTheme(theme, context.config.defaultResults)
   const response = {
     statusCode: 200,
     body: JSON.stringify(restaurants)
@@ -270,13 +277,10 @@ module.exports.handler = middy(async (event, context) => {
   return response
 }).use(ssm({
   cache: true,
-  cacheExpiryInMillis: 1 * 60 * 1000, // 1 mins
-  names: {
+  cacheExpiry: 1 * 60 * 1000, // 1 mins
+  setToContext: true,
+  fetchData: {
     config: `/${serviceName}/${stage}/search-restaurants/config`
-  },
-  onChange: () => {
-    const config = JSON.parse(process.env.config)
-    process.env.defaultResults = config.defaultResults
   }
 }))
 ```
@@ -313,11 +317,11 @@ There's one last thing we need to do for this to work once we deploy the app - I
 - Effect: Allow
   Action: ssm:GetParameters*
   Resource:
-    - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
-    - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+    - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+    - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
 ```
 
-After the change, the `iamRoleStatements` block should look like this.
+After the change, the `provider.iamRoleStatements` block should look like this.
 
 ```yml
 iamRoleStatements:
@@ -326,15 +330,15 @@ iamRoleStatements:
     Resource: !GetAtt RestaurantsTable.Arn
   - Effect: Allow
     Action: execute-api:Invoke
-    Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+    Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
   - Effect: Allow
     Action: ssm:GetParameters*
     Resource:
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
 ```
 
-2. Deploy the project
+2. Deploy the project 
 
 `npx sls deploy`
 
