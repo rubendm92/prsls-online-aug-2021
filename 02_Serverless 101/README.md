@@ -20,7 +20,7 @@ Follow the instruction and install the CLI from [http://serverless.com/](http://
 
 2. Initialise the project:
     
-    `npm init`
+    `npm init -y`
     
     Name the project accordingly and you can accept the rest of the defaults.
 

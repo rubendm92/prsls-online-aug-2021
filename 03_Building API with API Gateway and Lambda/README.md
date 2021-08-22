@@ -50,7 +50,6 @@ service: workshop-${self:custom.name}
 
 custom:
   name: <YOUR_NAME_HERE>
-  email: <YOUR_EMAIL_HERE>
 
 provider:
   name: aws
@@ -65,15 +64,13 @@ functions:
           method: get
 ```
 
-2. Under `custom`, replace `<YOUR_NAME_HERE>` with your name (no whitespaces, all lower case), e.g. `yancui`. This is so that if your project doesn't clash with your colleague's in case you're using a shared AWS account.
+2. Under `custom`, replace `<YOUR_NAME_HERE>` with your name (**no whitespaces, all lower case**), e.g. `yancui`. This is so that if your project doesn't clash with your colleague's in case you're using a shared AWS account.
 
-3. Also, replace `<YOUR_EMAIL_HERE>` with your email, we'll use this later to set up email notification when someone places an order.
+3. In the project root, add a folder called `functions`
 
-4. In the project root, add a folder called `functions`
+4. Add a file `get-index.js` under the newly created `functions` folder
 
-3. Add a file `get-index.js` under the newly created `functions` folder
-
-4. Modify the `get-index.js` file to the following:
+5. Modify the `get-index.js` file to the following:
 
 ```javascript
 const fs = require("fs")
@@ -317,13 +314,13 @@ resources:
 
 This is how we define a DynamoDB table in CloudFormation. Couple of things to note if you're new to AWS or CloudFormation.
 
-`RestaurantsTable` is called the **logical Id** in CloudFormation, and is the unique ID for a resource within a CloudFormation template. Other resources can reference this resource using this logical id. You typically use either the `!Ref` or `!GetAtt` function to reference a resource and get its attributes (like name or ARN). Which, depending on the resource and the attribute you want to get, you have to choose the right function... I have a cheatsheet [here](https://theburningmonk.com/cloudformation-ref-and-getatt-cheatsheet) that list all the resources and what you get with each.
+`RestaurantsTable` is called the **logical Id** in CloudFormation, and is the unique ID for a resource within a CloudFormation template. Other resources can reference this resource using this logical id. You typically use either the `!Ref` or `!GetAtt` function to reference a resource and get its attributes (like name or ARN). Which, depending on the resource and the attribute you want to get, you have to choose the right function... I have a cheatsheet [here](https://theburningmonk.com/cloudformation-ref-and-getatt-cheatsheet) that lists all the resources and what you get with each.
 
-DynamoDB two billing modes. And here, we're using the `On-Demand` mode by setting `BillingMode` to `PAY_PER_REQUEST`. This means we don't pay for the table unless we use it, which is perfect for a demo app like this. In fact, this is probably the right setting for your app in production too unless you have very stable and very predictable load.
+DynamoDB has two billing modes. And here, we're using the `On-Demand` mode by setting `BillingMode` to `PAY_PER_REQUEST`. This means we don't pay for the table unless we use it, which is perfect for a demo app like this. In fact, this is probably the right setting for your app in production too unless you have very stable and very predictable load.
 
 And lastly, DynamoDB operates with `HASH` and `RANGE` keys as the only schemas you need to specify, so that's what `KeySchema` is doing. When you specify an attribute in the key schema you also need to add them to the `AttributeDefinitions` list so you can specify their type (`S` for `String`), this is how we tell DynamoDB that the table has a `HASH` key called `name` and it's a `S`tring.
 
-There are other configurations available, but they're needed here. For more details, check out the CloudFormation docs [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html).
+There are other configurations available, but they're not needed here. For more details, check out the CloudFormation docs [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html).
 
 Ok, now let's deploy the serverless project again (so CloudFormation provisions the table):
 
@@ -412,23 +409,41 @@ plugins:
 
 **IMPORTANT**: `plugins` should be at the same level as `provider`, `functions` and `resources`, that is, it should have *NO INDENTATION*.
 
-3. Run `npx sls export-env`. This command should generate a `.env` file in your project root, and the file content should look something like this:
+3. Run `npx sls export-env --all`. This command should generate a `.env` file in your project root, and the file content should look something like this:
 
 `restaurants_table=workshop-yancui-dev-RestaurantsTable-1Y097GF7QLUIX`
 
 This is because our `get-restaurants` function has an environment variable called `restaurants_table`. The `serverless-export-env` plugin has resolved the `!Ref RestaurantTable` reference and helpfully added the resolved table name to the `.env` file.
 
-To load this `.env` file from our code, we need the `dotenv` NPM package.
+4. Before we move on, let's go back to the `serverless.yml` file and add the following to the `custom` section:
 
-4. Add `.env` to your `.gitignore` file
+```yml
+export-env:
+  overwrite: true
+```
 
-5. Install the `dotenv` package
+By default, the `serverless-export-env` plugin would not overwrite the `.env` file, but we want it to do just that whenever we run the command to make sure we have the latest values in the `.env` file.
+
+After this change, your custom section should look like this:
+
+```yml
+custom:
+  name: <YOUR NAME>
+  export-env:
+    overwrite: true
+```
+
+5. To load the `.env` file from our code, we need the `dotenv` NPM package.
+
+Add `.env` to your `.gitignore` file
+
+6. Install the `dotenv` package
 
 `npm install --save-dev dotenv`
 
-6. Add a file `seed-restaurants.js` to the project root
+7. Add a file `seed-restaurants.js` to the project root
 
-7. Modify `seed-restaurants.js` to the following.
+8. Modify `seed-restaurants.js` to the following.
 
 ```javascript
 const AWS = require('aws-sdk')
@@ -495,7 +510,7 @@ dynamodb.batchWrite(req).promise()
   .catch(err => console.error(err))
 ```
 
-8. Run the `seed-restaurants.js` script
+9. Run the `seed-restaurants.js` script
 
 `node seed-restaurants.js`
 
@@ -721,35 +736,15 @@ module.exports.handler = async (event, context) => {
 
 After this change, the `get-index` function needs the `restaurants_api` environment variable to know where the `/restaurants` endpoint is.
 
-The good news is that, the Serverless always use the logical ID `ApiGatewayRestApi` for the API Gateway REST API resource. So you can easily construct the URL for the `/restaurants` endpoint.
-
-The bad news is that you end up writing something like:
+The Serverless **ALWAYS** use the logical ID `ApiGatewayRestApi` for the API Gateway REST API resource it creates. So you can construct the URL for the `/restaurants` endpoint using the `Fn::Sub` CloudFormation pseudo function (or the `!Sub` shorthand) like this:
 
 ```yml
-Fn::Join:
-  - ''
-  - - "https://"
-    - !Ref ApiGatewayRestApi
-    - ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/restaurants"
+!Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
 ```
 
-it works, but is pretty verbose!
+See [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-sub.html) for more info on the `Fn::Sub` pseudo function.
 
-Luckily for us, there's a plugin that can help us with that. Enter `serverless-pseudo-parameters`, which allows us to use CloudFormation pseudo parameters such as `AWS::AccountId` and `AWS::Region`, and reference other resources easily.
-
-4. Install the `serverless-pseudo-parameters` plugin
-
-`npm install --save-dev serverless-pseudo-parameters`
-
-5. Add `serverless-pseudo-parameters` to the list of `plugins` at the bottom of the `serverless.yml` file. Your `plugins` section should look like this afterwards
-
-```yml
-plugins:
-  - serverless-export-env
-  - serverless-pseudo-parameters
-```
-
-6. Modify the `serverless.yml` to add the `restaurants_api` environment variable to the `get-index` function:
+4. Modify the `serverless.yml` to add the `restaurants_api` environment variable to the `get-index` function:
 
 ```yml
 get-index:
@@ -759,25 +754,19 @@ get-index:
         path: /
         method: get
   environment:
-    restaurants_api: https://#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
+    restaurants_api: !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
 ```
 
-Notice the `#{...}` values in that string. This is the syntax that the `serverless-pseudo-parameters` plugin introduces. Under the hood, the plugin translates strings that contain `#{...}` into a `Fn::Sub`, which you can see in the generated CloudFormation update template:
+The `Fn::Sub` pseudo function (we used the `!Sub` shorthand) lets you reference other CloudFormation resources as well as CloudFormation pseudo parameters with the `${}` syntax. Here we needed to reference two of these:
 
-```JSON
-"Environment": {
-  "Variables": {
-    "restaurants_api": {
-      "Fn::Sub": "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/restaurants"
-    }
-  }
-}
-```
+* `${ApiGatewayRestApi}`: this references the `ApiGatewayRestApi` resource that the Serverless framework has generated for the API Gateway REST API object. This is equivalent to `!Ref ApiGatewayRestApi`, which returns the API Id which is part of the API's url.
+* `${AWS::Region}`: this references the `AWS::Region` pseudo parameter, that is, the AWS region (e.g. `us-east-1`) that you're deploying the CloudFormation stack to.
 
-* `#{ApiGatewayRestApi}` => `${ApiGatewayRestApi}`
-* `#{AWS::Region}` => `${AWS::Region}`, which unfortunately you can't use within the `serverless.yml` as the Serverless framework also uses `${...}` in its own variables system. See [this page](https://serverless.com/framework/docs/providers/aws/guide/variables/) for more information.
+But wait, the Serverless framework also uses `${...}` syntax in its own variables system. See [this page](https://serverless.com/framework/docs/providers/aws/guide/variables/) for more information.
 
-7. Deploy the project
+Luckily, we can use both side by side, and in this example, we can see that we're referencing the `provider.stage` variable in the same URL.
+
+5. Deploy the project
 
 `npx sls deploy`
 
