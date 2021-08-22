@@ -47,12 +47,12 @@ But we need to make sure when we distribute the secret to our application, we do
 ```javascript
 .use(ssm({
   cache: true,
-  cacheExpiryInMillis: 5 * 60 * 1000, // 5 mins
-  names: {
-    secretString: `/${serviceName}/${stage}/search-restaurants/secretString`
-  },
+  cacheExpiry: 1 * 60 * 1000, // 1 mins
   setToContext: true,
-  throwOnFailedCall: true
+  fetchData: {
+    config: `/${serviceName}/${stage}/search-restaurants/config`,
+    secretString: `/${serviceName}/${stage}/search-restaurants/secretString`
+  }
 }))
 ```
 
@@ -62,7 +62,7 @@ After this change, the whole `module.exports.handler = ...` block of your functi
 module.exports.handler = middy(async (event, context) => {
   const req = JSON.parse(event.body)
   const theme = req.theme
-  const restaurants = await findRestaurantsByTheme(theme, process.env.defaultResults)
+  const restaurants = await findRestaurantsByTheme(theme, context.config.defaultResults)
   const response = {
     statusCode: 200,
     body: JSON.stringify(restaurants)
@@ -71,22 +71,12 @@ module.exports.handler = middy(async (event, context) => {
   return response
 }).use(ssm({
   cache: true,
-  cacheExpiryInMillis: 5 * 60 * 1000, // 5 mins
-  names: {
-    config: `/${serviceName}/${stage}/search-restaurants/config`
-  },
-  onChange: () => {
-    const config = JSON.parse(process.env.config)
-    process.env.defaultResults = config.defaultResults
-  }
-})).use(ssm({
-  cache: true,
-  cacheExpiryInMillis: 5 * 60 * 1000, // 5 mins
-  names: {
-    secretString: `/${serviceName}/${stage}/search-restaurants/secretString`
-  },
+  cacheExpiry: 1 * 60 * 1000, // 1 mins
   setToContext: true,
-  throwOnFailedCall: true
+  fetchData: {
+    config: `/${serviceName}/${stage}/search-restaurants/config`,
+    secretString: `/${serviceName}/${stage}/search-restaurants/secretString`
+  }
 }))
 ```
 
@@ -119,9 +109,9 @@ There's one last thing we need to do for this to work once we deploy the app - I
 - Effect: Allow
   Action: ssm:GetParameters*
   Resource:
-    - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
-    - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
-    - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
+    - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+    - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+    - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
 ```
 
 After the change, the `iamRoleStatements` block should look like this.
@@ -133,13 +123,13 @@ iamRoleStatements:
     Resource: !GetAtt RestaurantsTable.Arn
   - Effect: Allow
     Action: execute-api:Invoke
-    Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+    Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
   - Effect: Allow
     Action: ssm:GetParameters*
     Resource:
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
 ```
 
 2. Deploy the project
