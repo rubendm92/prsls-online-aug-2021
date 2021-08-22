@@ -126,9 +126,9 @@ search-restaurants:
         path: /restaurants/search
         method: post
         authorizer:
-            name: CognitoAuthorizer
-            type: COGNITO_USER_POOLS
-            arn: !GetAtt CognitoUserPool.Arn
+          name: CognitoAuthorizer
+          type: COGNITO_USER_POOLS
+          arn: !GetAtt CognitoUserPool.Arn
   environment:
     restaurants_table: !Ref RestaurantsTable
 ```
@@ -149,6 +149,8 @@ and see the response
 }
 ```
 
+This is because the `POST /restaurants/search` endpoint is now an authenticated endpoint. To call it, the user needs to first sign in to the Cognito User Pool we created earlier, obtain an authentication token and include the token in the HTTP request.
+
 </p></details>
 
 <details>
@@ -166,7 +168,7 @@ get-index:
         path: /
         method: get
   environment:
-    restaurants_api: https://#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
+    restaurants_api: !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
     cognito_user_pool_id: !Ref CognitoUserPool
     cognito_client_id: !Ref WebCognitoUserPoolClient
 ```
