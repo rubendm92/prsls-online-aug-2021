@@ -126,7 +126,6 @@ const given = require('../steps/given')
 const tearDown = require('../steps/tearDown')
 const { init } = require('../steps/init')
 const AWS = require('aws-sdk')
-console.log = jest.fn()
 
 const mockPutEvents = jest.fn()
 AWS.EventBridge.prototype.putEvents = mockPutEvents
@@ -970,7 +969,7 @@ notify-restaurant:
   handler: functions/notify-restaurant.handler
   events:
     - eventBridge:
-        eventBus: arn:aws:events:#{AWS::Region}:#{AWS::AccountId}:event-bus/order_events_${self:provider.stage}
+        eventBus: !Ref EventBus
         pattern:
           source:
             - big-mouth
@@ -981,7 +980,30 @@ notify-restaurant:
     restaurant_notification_topic: !Ref RestaurantNotificationTopic
 ```
 
-In case you're wondering why we aren't using `!GetAtt EventBus.Arn` in the event source definition, it's because the Serverless framework only accepts a string here.
+7. For legacy reasons, in order to use `!Ref EventBus` to reference the event bus to use with the `notify-restaurants` function, you also have to add the following to the `provider` section of the `serverless.yml`:
+
+```yml
+eventBridge:
+  useCloudFormation: true
+```
+
+This is because, until recently, the Serverless framework would use a CloudFormation custom resource to provision the EventBridge trigger. So, to prevent a breaking change, this was the compromise they came up with.
+
+In any case, after this, your `provider` section should look something like this:
+
+```yml
+provider:
+  name: aws
+  runtime: nodejs12.x
+  eventBridge:
+    useCloudFormation: true
+  iamRoleStatements:
+    ...
+  environment:
+    ...  
+```
+
+Make sure all the indentations are correct!
 
 If you have read the Serverless framework [docs](https://serverless.com/framework/docs/providers/aws/events/event-bridge#using-a-different-event-bus) on EventBridge, then you might also be wondering why I didn't just let the Serverless framework create the bus for us.
 
@@ -995,7 +1017,7 @@ As for the subscription pattern itself, well, in this case we're listening for o
 
 To learn more about content-based filtering with EventBridge, have a read of [this post](https://www.tbray.org/ongoing/When/201x/2019/12/18/Content-based-filtering) by Tim Bray.
 
-7. Modify `serverless.yml` to add the permission to `sns:Publish` to the SNS topic, under `provider.iamRoleStatements`
+8. Modify `serverless.yml` to add the permission to `sns:Publish` to the SNS topic, under `provider.iamRoleStatements`
 
 ```yml
 - Effect: Allow
