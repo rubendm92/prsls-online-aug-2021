@@ -146,7 +146,7 @@ describe(`When we invoke the GET / endpoint`, () => {
 ```json
 "scripts": {
   "sls": "serverless",
-  "dotEnv": "sls export-env",
+  "dotEnv": "sls export-env --all",
   "test": "npm run dotEnv && jest"
 },
 ```
@@ -160,13 +160,13 @@ This way, whenever we run `npm run test` (which you can also use the shorthand `
 and see that the test fails with the error
 
 ```
-FAIL  tests/test_cases/get-index.tests.js
+ FAIL  tests/test_cases/get-index.tests.js
   When we invoke the GET / endpoint
-    ✕ Should return the index page with 8 restaurants (92ms)
+    ✕ Should return the index page with 8 restaurants (80 ms)
 
   ● When we invoke the GET / endpoint › Should return the index page with 8 restaurants
 
-    TypeError [ERR_INVALID_ARG_TYPE]: The "url" argument must be of type string. Received type undefined
+    TypeError [ERR_INVALID_ARG_TYPE]: The "url" argument must be of type string. Received undefined
 
       16 | const getRestaurants = async () => {
       17 |   console.log(`loading restaurants from ${restaurantsApiRoot}...`)
@@ -180,7 +180,17 @@ FAIL  tests/test_cases/get-index.tests.js
       at handler (functions/get-index.js:33:29)
       at viaHandler (tests/steps/when.js:8:26)
       at Object.we_invoke_get_index (tests/steps/when.js:16:35)
-      at Object.it (tests/test_cases/get-index.tests.js:6:28)
+      at Object.<anonymous> (tests/test_cases/get-index.tests.js:6:28)
+
+  console.log
+    loading restaurants from undefined...
+
+      at getRestaurants (functions/get-index.js:17:11)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.683 s
 ```
 
 This is because the `get-index` function needs a number of environment variables, including the URL to the `get-restaurants` endpoint. We haven't set these up in our tests.
@@ -265,35 +275,37 @@ So that we will run the initialization logic before test case.
 and see that the test still fails! This time with a different error.
 
 ```
-FAIL  tests/test_cases/get-index.tests.js
+ FAIL  tests/test_cases/get-index.tests.js
   When we invoke the GET / endpoint
-    ✕ Should return the index page with 8 restaurants (50ms)
+    ✕ Should return the index page with 8 restaurants (41 ms)
 
   ● When we invoke the GET / endpoint › Should return the index page with 8 restaurants
 
-    TypeError: Cannot read property 'replace' of null
+    connect ECONNREFUSED 127.0.0.1:443
 
-      at dispatchHttpRequest (node_modules/axios/lib/adapters/http.js:84:74)
-      at httpAdapter (node_modules/axios/lib/adapters/http.js:21:10)
-      at dispatchRequest (node_modules/axios/lib/core/dispatchRequest.js:52:10)
 
-  console.log tests/steps/init.js:25
+
+  console.log
     AWS credential loaded
 
-  console.log functions/get-index.js:17
-    loading restaurants from https://#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com/dev/restaurants...
+      at init (tests/steps/init.js:22:11)
+
+  console.log
+    loading restaurants from https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/restaurants...
+
+      at getRestaurants (functions/get-index.js:17:11)
 
 Test Suites: 1 failed, 1 total
 Tests:       1 failed, 1 total
 Snapshots:   0 total
-Time:        0.947s, estimated 1s
+Time:        0.431 s, estimated 1 s
 ```
 
 Notice that weird URL that's logged from the `get-index` function?
 
 ```
   console.log functions/get-index.js:17
-    loading restaurants from https://#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com/dev/restaurants...
+    loading restaurants from https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/restaurants...
 ```
 
 That's literal value we gave to the `get-index` function's `restaurants_api` environment variable.
@@ -306,7 +318,7 @@ get-index:
         path: /
         method: get
   environment:
-    restaurants_api: https://#{ApiGatewayRestApi}.execute-api.#{AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
+    restaurants_api: !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}/restaurants
     cognito_user_pool_id: !Ref CognitoUserPool
     cognito_client_id: !Ref WebCognitoUserPoolClient
 ```
@@ -320,9 +332,9 @@ Welcome to the real world, where your tools don't integrate perfectly with each 
 <details>
 <summary><b>Compromises, compromises...</b></summary><p>
 
-Ok, so the `serverless-export-env` plugin does 90% of the work and gives us the environment variables we need, but it falls down when it comes to the `restaurants_api` environment variable because it doesn't work with the `serverless-pseudo-parameters`.
+Ok, so the `serverless-export-env` plugin does 90% of the work and gives us the environment variables we need, but it falls down when it comes to the `!Sub` function.
 
-To solve that, we have to drop back down to using CloudFormation pseudo functions.
+To solve that, we have to drop back down to using one of the CloudFormation pseudo functions that the plugin supports - `Fn::Join` (or the `!Join` shorthand).
 
 Why can't we have all the nice things?
 
@@ -376,11 +388,13 @@ Time:        1.162s, estimated 2s
 
 Congratulation! You have just written and passed your first integration test!
 
-3. But notice all those `console.log` messages are clutering in the output. If you want to 'silence' them then add this line to the top of `get-index.tests.js`:
+3. But notice all those `console.log` messages are clutering in the output. If you want to 'silence' them then you can change the `test` script in the `package.json` to:
 
-`console.log = jest.fn()`
+```json
+"test": "npm run dotEnv && jest --silent"
+```
 
-`jest.fn()` creates a mock function (which you can read all about [here](https://jestjs.io/docs/en/mock-functions.html)). So this in case, we're monkey-patching the `console.log` method with a mock function so we don't have to see those console logs.
+The `--silent` flag would supress the console log messages.
 
 </p></details>
 
@@ -396,7 +410,6 @@ Now let's do more of the same and add a test case for the `get-restaurants` func
 ```javascript
 const { init } = require('../steps/init')
 const when = require('../steps/when')
-console.log = jest.fn()
 
 describe(`When we invoke the GET /restaurants endpoint`, () => {
   beforeAll(async () => await init())
