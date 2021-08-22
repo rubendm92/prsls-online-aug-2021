@@ -56,11 +56,11 @@ So we just need to add the root URL to our API as an environment variable.
 
 3. Open `serverless.yml`.
 
-4. Add the following to the `resources.Outputs` section:
+4. Add the following to the `provider` section:
 
 ```yml
-RestApiUrl:
-  Value: 
+environment:
+  rest_api_url:
     Fn::Join:
       - ""
       - - https://
@@ -68,24 +68,33 @@ RestApiUrl:
         - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
 ```
 
-After this change, the `resources.Outputs` section of your `serverless.yml` should look like this (pay attention to the indentation):
+Because this environment variable is added to the `provider` section as opposed to under a specific function's definition, it's added to all the functions in this project.
+
+After this change, the `provider` section of your `serverless.yml` should look like this (pay attention to the indentation):
 
 ```yml
-  Outputs:
-    RestApiUrl: ...
+provider:
+  name: aws
+  runtime: nodejs12.x
 
-    RestaurantsTableName: ...
+  iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:scan
+      Resource: !GetAtt RestaurantsTable.Arn
+    - Effect: Allow
+      Action: execute-api:Invoke
+      Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
 
-    CognitoUserPoolId: ...
-
-    CognitoUserPoolArn: ...
-
-    CognitoUserPoolWebClientId: ...
-
-    CognitoUserPoolServerClientId: ...
+  environment:
+    rest_api_url:
+      Fn::Join:
+        - ""
+        - - https://
+          - !Ref ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
 ```
 
-This adds a `RestApiUrl` output to the CloudFormation stack, which the `serverless-export-env` plugin would capture into the `.env` file as an environment variable called `REST_API_URL`. This environment variable would then be picked up and loaded into our tests by the `init` module.
+The `serverless-export-env` plugin would add this new environment variable to the `.env` file, which is then picked up and loaded into our tests by the `init` module.
 
 But we also need to set the `TEST_MODE` environment variable too. We'll do that in the `scripts` in `package.json`
 
@@ -102,7 +111,7 @@ After this change, your `scripts` object should look like this:
 ```json
   "scripts": {
     "sls": "serverless",
-    "dotEnv": "sls export-env",
+    "dotEnv": "sls export-env --all",
     "test": "npm run dotEnv && cross-env TEST_MODE=handler jest"
   },
 ```
@@ -158,7 +167,7 @@ const signHttpRequest = (url) => {
 }
 
 const viaHttp = async (relPath, method, opts) => {
-  const url = `${process.env.REST_API_URL}/${relPath}`
+  const url = `${process.env.rest_api_url}/${relPath}`
   console.info(`invoking via HTTP ${method} ${url}`)
 
   try {
@@ -194,7 +203,7 @@ const viaHttp = async (relPath, method, opts) => {
 
 Let's break it down.
 
-This `viaHttp` method makes a HTTP request to the relative path on the `REST_API_URL` environment variable (which we configured in the `serverless.yml` and loaded through `.env` file that's generated before every test).
+This `viaHttp` method makes a HTTP request to the relative path on the `rest_api_url` environment variable (which we configured in the `serverless.yml` and loaded through `.env` file that's generated before every test).
 
 You can pass in an `opts` object to pass in additional arguments:
 
@@ -219,7 +228,7 @@ After this change, your `scripts` section should look like this:
 ```json
   "scripts": {
     "sls": "serverless",
-    "dotEnv": "sls export-env",
+    "dotEnv": "sls export-env --all",
     "test": "npm run dotEnv && cross-env TEST_MODE=handler jest",
     "acceptance": "npm run dotEnv && cross-env TEST_MODE=http jest"
   },
@@ -326,6 +335,12 @@ Test Suites: 3 passed, 3 total
 Tests:       3 passed, 3 total
 Snapshots:   0 total
 Time:        1.924s, estimated 2s
+```
+
+You can tell the `get-index` test is now calling the deployed endpoint by this log message:
+
+```bash
+invoking via HTTP GET https://4q8sbvheq2.execute-api.us-east-1.amazonaws.com/dev/
 ```
 
 </p></details>
@@ -490,13 +505,40 @@ module.exports = {
 }
 ```
 
-This requires the env vars `COGNITO_USER_POOL_ID` and `COGNITO_USER_POOL_SERVER_CLIENT_ID`.
+This requires the env vars `cognito_user_pool_id` and `cognito_server_client_id`.
 
-These came from the `.env` file, via the CloudFormation outputs we configured in the `resouasrces.Outputs` section of the `serverless.yml`, which the `serverless-export-env` plugin has captured for us.
+While the `cognito_user_pool_id` is already captured as an environment variable for the `get-index` function, we need to add the `cognito_server_client_id` environment variable.
 
-After each test, we also want to delete the test user so test data doesn't just accumulate in our environment.
+4. None of our functions need the Cognito server client id, but for the purpose of our tests, we need to capture it somehow. The closest function I can think of is the `get-index` function, so let's put it there.
 
-4. Add a file `tearDown.js` to the `steps` folder and paste the following in
+Open the `serverless.yml` and update the `get-index` function's definition to add a `cognito_server_client_id` environment variable like this:
+
+`cognito_server_client_id: !Ref ServerCognitoUserPoolClient`
+
+After this change, your `get-index` function should look like this:
+
+```yml
+get-index:
+  handler: functions/get-index.handler
+  events:
+    - http:
+        path: /
+        method: get
+  environment:
+    restaurants_api:
+      Fn::Join:
+        - ""
+        - - https://
+          - !Ref ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}/restaurants
+    cognito_user_pool_id: !Ref CognitoUserPool
+    cognito_client_id: !Ref WebCognitoUserPoolClient
+    cognito_server_client_id: !Ref ServerCognitoUserPoolClient
+```
+
+5. After each test, we also want to delete the test user so test data doesn't just accumulate in our environment.
+
+Add a file `teardown.js` to the `steps` folder and paste the following in
 
 ```javascript
 const AWS = require('aws-sdk')
@@ -505,7 +547,7 @@ const an_authenticated_user = async (user) => {
   const cognito = new AWS.CognitoIdentityServiceProvider()
   
   let req = {
-    UserPoolId: process.env.COGNITO_USER_POOL_ID,
+    UserPoolId: process.env.cognito_user_pool_id,
     Username: user.username
   }
   await cognito.adminDeleteUser(req).promise()
@@ -547,7 +589,7 @@ So let's go back to the test, and add steps to create and delete cognito users.
 ```javascript
 const { init } = require('../steps/init')
 const when = require('../steps/when')
-const tearDown = require('../steps/tearDown')
+const teardown = require('../steps/teardown')
 const given = require('../steps/given')
 console.log = jest.fn()
 
@@ -560,7 +602,7 @@ describe('Given an authenticated user', () => {
   })
 
   afterAll(async () => {
-    await tearDown.an_authenticated_user(user)
+    await teardown.an_authenticated_user(user)
   })
 
   describe(`When we invoke the POST /restaurants/search endpoint with theme 'cartoon'`, () => {
@@ -613,7 +655,7 @@ Snapshots:   0 total
 Time:        4.098s
 ```
 
-8. Run the integration tests and see that all 3 tests are still passing as well
+8. Run the integration tests again and see that all 3 tests are still passing as well
 
 ```
  PASS  tests/test_cases/get-index.tests.js
