@@ -34,19 +34,25 @@ iamRoleStatements:
     Resource: !GetAtt RestaurantsTable.Arn
   - Effect: Allow
     Action: execute-api:Invoke
-    Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+    Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
 ```
+
+Once again, we're using the `!Sub` function here. The resource ARN points to the `GET /restaurants` endpoint we added in the last module, and notice that we're also referencing the `AWS::AccountId` pseudo parameter. It returns the id of the AWS account you're deploying the CloudFormation stack to.
 
 </p></details>
 
 <details>
 <summary><b>Signing request with IAM role</b></summary><p>
 
+In the last step, we added AWS_IAM authentication to the `GET /restaurants` endpoint. So, to call this endpoint, we'd have to sign the HTTP request with the [AWS v4 signing process](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html) with our IAM role/user.
+
+Each Lambda function has an IAM role, and we can use the `aws4` NPM package to sign HTTP requests with that role.
+
 1. Install `aws4` as dependency
 
 `npm install --save aws4`
 
-This package lets us sign HTTP requests (with the [AWS v4 signing process](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)) using our AWS credentials.
+This package lets us sign HTTP requests using our AWS credentials.
 
 It applies the same logic as the AWS SDKs and looks for your AWS credentials in a number of places - in the environment variables, the AWS profiles (both `.aws/~config` and `.aws/~credentials`) using the EC2 instance metadata and ECS metadata, and so on.
 
