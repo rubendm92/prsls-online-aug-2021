@@ -9,14 +9,14 @@
 
 1. Install `serverless-iam-roles-per-function` as dev dependency
 
-`npm install --save-dev serverless-iam-roles-per-function@next`
+`npm install --save-dev serverless-iam-roles-per-function`
 
 2. Modify `serverless.yml` and add it as a plugin
 
 ```yml
 plugins:
   - serverless-export-env
-  - serverless-pseudo-parameters
+  - serverless-export-outputs
   - serverless-iam-roles-per-function
 ```
 
@@ -33,7 +33,7 @@ plugins:
 iamRoleStatements:
   - Effect: Allow
     Action: execute-api:Invoke
-    Resource: arn:aws:execute-api:#{AWS::Region}:#{AWS::AccountId}:#{ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
+    Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/${self:provider.stage}/GET/restaurants
 ```
 
 **IMPORTANT** this new block should be aligned with `environment` and `events`, e.g.
@@ -62,7 +62,7 @@ iamRoleStatements:
     Resource: !GetAtt RestaurantsTable.Arn
   - Effect: Allow
     Action: ssm:GetParameters*
-    Resource: arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
+    Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/get-restaurants/config
 ```
 
 4. Give the `search-restaurants` function its own IAM role statements
@@ -75,8 +75,8 @@ iamRoleStatements:
   - Effect: Allow
     Action: ssm:GetParameters*
     Resource:
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
-      - arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/config
+      - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${self:service}/${self:provider.stage}/search-restaurants/secretString
   - Effect: Allow
     Action: kms:Decrypt
     Resource: ${ssm:/dev/kmsArn}
