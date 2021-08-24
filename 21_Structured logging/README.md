@@ -21,7 +21,7 @@ Now we need to change all the places where we're using `console.log`.
 const Log = require('@dazn/lambda-powertools-logger')
 ```
 
-on ln20, replace
+on ln19, replace
 
 ```javascript
 console.log(`loading restaurants from ${restaurantsApiRoot}...`)
@@ -35,7 +35,7 @@ Log.debug('getting restaurants...', { url: restaurantsApiRoot })
 
 Notice that the `restaurantsApiRoot` is captured as a separate `url` attribute in the log message. Capturing variables as attributes (instead of baking them into the message) makes them easier to search and filter by.
 
-On ln37, replace
+On ln36, replace
 
 ```javascript
 console.log(`found ${restaurants.length} restaurants`)
@@ -70,7 +70,7 @@ Log.debug('getting restaurants from DynamoDB...', {
 })
 ```
 
-And then on ln22, replace
+And then on ln21, replace
 
 ```javascript
 console.log(`found ${resp.Items.length} restaurants`)
@@ -126,7 +126,6 @@ Log.debug(`published event into EventBridge`, {
 and see that the functions are now logging in JSON
 
 ```
- 
  PASS  tests/test_cases/get-index.tests.js
   ● Console
 
@@ -254,7 +253,17 @@ After this change, the `provider` section should look like this:
 provider:
   name: aws
   runtime: nodejs12.x
+
+  eventBridge:
+    useCloudFormation: true
+
   environment:
+    rest_api_url:
+      Fn::Join:
+        - ""
+        - - https://
+          - !Ref ApiGatewayRestApi
+          - .execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}
     serviceName: ${self:service}
     stage: ${self:provider.stage}
     LOG_LEVEL: ${self:custom.logLevel.${self:custom.stage}, self:custom.logLevel.default}
