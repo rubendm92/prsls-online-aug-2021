@@ -45,7 +45,9 @@ On the other side of the HTTP request, the `get-restaurants` function would extr
 
 4. Open `tests/steps/when.js` and modify the `viaHandler` method so that `context` is initialized with a `awsRequestId`, e.g.
 
-`const context = { awsRequestId: 'test' }`
+```js
+const context = { awsRequestId: 'test' }
+```
 
 This will be used to initialize the correlation ID with and you'll see it in the logs when you run the test (pay attention to the `x-correlation-id` field in the log messages)
 
