@@ -35,6 +35,8 @@ provider:
   stage: dev
   environment:
     ...
+  eventBridge:
+    useCloudFormation: true
   tracing:
     apiGateway: true
     lambda: true
