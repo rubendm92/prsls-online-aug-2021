@@ -89,7 +89,7 @@ E2eTestSnsSubscription:
     Protocol: sqs
     Endpoint: !GetAtt E2eTestQueue.Arn
     RawMessageDelivery: false
-    Region: "#{AWS::Region}"
+    Region: !Ref AWS::Region
     TopicArn: !Ref RestaurantNotificationTopic
 ```
 
@@ -124,7 +124,7 @@ With `RawMessageDelivery` set to `false`, this is what you receive in SQS instea
 
 From which we're able to identify where the message was sent from.
 
-6. As good house-keeping and to allows us to reference it from the tests. Let's add the SQS queue's name to the stack outputs so it can be captured into our `.env` file.
+6. As good house-keeping, let's add the SQS queue's name to the stack outputs so we can capture it somehow.
 
 Add the following to the `resources.Outputs` section.
 
@@ -141,6 +141,93 @@ Notice that the `IsE2eTest` condition can be used on stack outputs too. If it's 
 `npx sls deploy`
 
 This will provision a SQS queue and subscribe it to the SNS topic.
+
+</p></details>
+
+<details>
+<summary><b>Capture CloudFormation outputs in .env file</b></summary><p>
+
+Earlier on, we had a few cases where there are CloudFormation outputs that we'd like to capture in the .env file and we had to introduce them as environment variables to our functions just to facilitate this.
+
+It's a bit of a hack and we can't even do that here. These SNS topics and SQS queues are created conditionally but we can't add environment variables conditionally.
+
+Instead, what we could do is to bring in another plugin `serverless-export-outputs` and use it to capture the CloudFormation outputs into a separate .env file, let's call it `.env-outputs` and we'll have the `dotenv` module load both during the `init` step.
+
+1. Run `npm i --save-dev serverless-export-outputs` to install the plugin
+
+2. Open `serverless.yml` and add the following to the `plugins` list
+
+```yml
+- serverless-export-outputs
+```
+
+After this change, the `plugins` section should look like this:
+
+```yml
+plugins:
+  - serverless-export-env
+  - serverless-export-outputs
+```
+
+3. To configure the plugin, we can add the following to the `custom` section in the `serverless.yml`
+
+```yml
+  exportOutputs:
+    include:
+      - E2eTestQueueUrl
+      - CognitoUserPoolServerClientId
+    output:
+      file: ./.env-outputs
+```
+
+This tells the plugin to capture the `E2eTestQueueUrl` and `CognitoUserPoolServerClientId` outputs in a file called `.env-outputs`.
+
+This plugin runs everytime you deploy your app, so, to create the file, let's deploy one more time.
+
+4. Run `npx sls deploy`.
+
+After the deployment finishes you should have a `.env-outputs` file at the project root. Open it and have a look, it should look something like this:
+
+```
+E2eTestQueueUrl = "https://sqs.us-east-1.amazonaws.com/374852340823/workshop-yancui-dev-E2eTestQueue-1OCUTTAYJP5M2"
+CognitoUserPoolServerClientId = "54jpfqr40v1gkpsivb9530g2gq"
+```
+
+5. Open `tests/steps/init.js` and at the top of the file, replace line 3
+
+```js
+require('dotenv').config()
+```
+
+with
+
+```js
+const dotenv = require('dotenv')
+dotenv.config()
+dotenv.config({ path: '.env-outputs' })
+```
+
+to load both the `.env` file as well as the `.env-outputs` file.
+
+6. Open `tests/steps/given.js`, on line 11, where you have:
+
+```js
+const clientId = process.env.cognito_server_client_id
+```
+
+replace it with
+
+```js
+const clientId = process.env.CognitoUserPoolServerClientId
+```
+
+now that we're able to load the `CognitoUserPoolServerClientId` CloudFormation output into environment variables.
+
+7. As a final step to clean things up, open `serverless.yml` and under `functions.get-index.environment`, delete the `cognito_server_client_id` environment variable.
+
+This was the environment variable we added for the `get-index` function earlier, even though it doesn't actually need it.
+
+Ok, we're ready to go back to write some more tests.
 
 </p></details>
 
@@ -180,7 +267,7 @@ const we_invoke_notify_restaurant = async (event) => {
   if (mode === 'handler') {
     await viaHandler(event, 'notify-restaurant')
   } else {
-    const busName = process.env.EVENT_BUS_NAME
+    const busName = process.env.bus_name
     await viaEventBridge(busName, event.source, event['detail-type'], event.detail)
   }
 }
@@ -211,7 +298,7 @@ const startListening = () => {
   }
 
   const sqs = new SQS()
-  const queueUrl = process.env.E_2_E_TEST_QUEUE_URL
+  const queueUrl = process.env.E2eTestQueueUrl
   const loop = async () => {
     const resp = await sqs.receiveMessage({
       QueueUrl: queueUrl,
@@ -306,7 +393,6 @@ const when = require('../steps/when')
 const AWS = require('aws-sdk')
 const chance = require('chance').Chance()
 const messages = require('../messages')
-console.log = jest.fn()
 
 const mockPutEvents = jest.fn()
 const mockPublish = jest.fn()
@@ -372,7 +458,7 @@ describe(`When we invoke the notify-restaurant function`, () => {
     it(`Should publish message to SNS`, async () => {
       await messages.waitForMessage(
         'sns',
-        process.env.RESTAURANT_NOTIFICATION_TOPIC_ARN,
+        process.env.restaurant_notification_topic,
         JSON.stringify(event.detail)
       )
     }, 10000)
@@ -407,7 +493,7 @@ And since we don't have a way to capture EventBridge events yet, we are going to
   it(`Should publish message to SNS`, async () => {
     await messages.waitForMessage(
       'sns',
-      process.env.RESTAURANT_NOTIFICATION_TOPIC_ARN,
+      process.env.restaurant_notification_topic,
       JSON.stringify(event.detail)
     )
   }, 10000)
@@ -534,14 +620,14 @@ E2eTestEventBridgeRule:
             source: "$.source"
             detailType: "$.detail-type"
             detail: "$.detail"
-          InputTemplate: >
+          InputTemplate: !Sub >
             {
               "event": {
                 "source": <source>,
                 "detail-type": <detailType>,
                 "detail": <detail>
               },
-              "eventBusName": "#{EventBus}"
+              "eventBusName": "${EventBus}"
             }
 ```
 
@@ -601,35 +687,20 @@ In our case, I want to forward a JSON structure like this to SQS:
 Hence why I use the following template:
 
 ```yml
-InputTemplate: >
+InputTemplate: !Sub >
   {
     "event": {
       "source": <source>,
       "detail-type": <detailType>,
       "detail": <detail>
     },
-    "eventBusName": "#{EventBus}"
+    "eventBusName": "${EventBus}"
   }
 ```
 
 ps. if you're not familiar with YML, the `>` symbol lets you insert a multi-line string. Read more about YML multi-line strings [here](https://yaml-multiline.info).
 
-ps. if you recall, the `"#{EventBus}"` syntax is from the `serverless-pseudo-parameters` plugin. In this case, it's transformed this into a `Fn::Sub` in the generated CloudFormation stack:
-
-```json
-"InputTransformer": {
-  "InputPathsMap": {
-    "source": "$.source",
-    "detailType": "$.detail-type",
-    "detail": "$.detail"
-  },
-  "InputTemplate": {
-    "Fn::Sub": "{\n  \"event\": {\n    \"source\": <source>,\n    \"detail-type\": <detailType>,\n    \"detail\": <detail>\n  },\n  \"eventBusName\": \"${EventBus}\"\n}\n"
-  }
-}
-```
-
-And references the `EventBus` resource - in this case, it's equivalent to `!Ref EventBus` but `Fn::Sub` allows you to do it inline. Have a look at `Fn::Sub`'s documentation page [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-sub.html) for more details.
+ps. if you recall, the `"${EventBus}"` syntax is for the `Fn::Sub` (or in this case, the `!Sub` shorthand) CloudFormation pseudo function, and references the `EventBus` resource - in this case, it's equivalent to `!Ref EventBus` but `Fn::Sub` allows you to do it inline. Have a look at `Fn::Sub`'s documentation page [here](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-sub.html) for more details.
 
 Anyhow, with this `InputTransformer` configuration, this is how the events would look like in SQS:
 
@@ -718,7 +789,7 @@ Ok, great, the EventBridge messages are captured in SQS, now we can add them to 
 
 We need to update the `tests/messages.js` module to capture messages from EventBridge too.
 
-1. In `tests/messages.js`, on ln26, replace this block of code
+1. In `tests/messages.js`, on ln27, replace this block of code
 
 ```js
 resp.Messages.forEach(msg => {
@@ -796,7 +867,7 @@ describe(`When we invoke the notify-restaurant function`, () => {
   it(`Should publish message to SNS`, async () => {
     await messages.waitForMessage(
       'sns',
-      process.env.RESTAURANT_NOTIFICATION_TOPIC_ARN,
+      process.env.restaurant_notification_topic,
       JSON.stringify(event.detail)
     )
   }, 10000)
@@ -804,7 +875,7 @@ describe(`When we invoke the notify-restaurant function`, () => {
   it(`Should publish "restaurant_notified" event to EventBridge`, async () => {
     await messages.waitForMessage(
       'eventbridge',
-      process.env.EVENT_BUS_NAME,
+      process.env.bus_name,
       JSON.stringify({
         ...event,
         'detail-type': 'restaurant_notified'
@@ -919,7 +990,6 @@ const given = require('../steps/given')
 const tearDown = require('../steps/tearDown')
 const { init } = require('../steps/init')
 const messages = require('../messages')
-console.log = jest.fn()
 
 describe('Given an authenticated user', () => {
   let user
@@ -950,7 +1020,7 @@ describe('Given an authenticated user', () => {
 
       await messages.waitForMessage(
         'eventbridge',
-        process.env.EVENT_BUS_NAME,
+        process.env.bus_name,
         JSON.stringify({
           source: 'big-mouth',
           'detail-type': 'order_placed',
